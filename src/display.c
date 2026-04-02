@@ -2569,6 +2569,72 @@ static void disp_readev_fn(Event *event, void *data)
 	if (D_fore)
 		D_fore->w_lastdisp = display;
 
+	/* Translate CSI u (fixterms/kitty keyboard protocol) sequences
+	 * into legacy key encoding in-place. Modern terminals like Ghostty
+	 * send keys as ESC [ codepoint ; modifiers u instead of legacy
+	 * control codes. Screen doesn't understand CSI u, so we convert
+	 * them here before any other input processing sees the bytes.
+	 *
+	 * Format: ESC [ <codepoint> ; <modifiers> u
+	 * Example: Ctrl+A = ESC [ 97 ; 5 u -> 0x01
+	 *
+	 * Modifier bits: 1=shift, 2=alt, 4=ctrl (value is encoded + 1)
+	 */
+	{
+		unsigned char *rp = buf, *wp = buf;
+		unsigned char *end = buf + size;
+		while (rp < end) {
+			/* Look for ESC [ */
+			if (rp[0] == '\033' && rp + 1 < end && rp[1] == '[') {
+				unsigned char *sp = rp + 2;
+				int codepoint = 0, modifiers = 0;
+				int has_semi = 0;
+
+				/* Parse codepoint */
+				while (sp < end && *sp >= '0' && *sp <= '9') {
+					codepoint = codepoint * 10 + (*sp - '0');
+					sp++;
+				}
+				/* Parse ; modifiers */
+				if (sp < end && *sp == ';') {
+					has_semi = 1;
+					sp++;
+					while (sp < end && *sp >= '0' && *sp <= '9') {
+						modifiers = modifiers * 10 + (*sp - '0');
+						sp++;
+					}
+				}
+				/* Check for terminating 'u' */
+				if (sp < end && *sp == 'u' && codepoint > 0 && has_semi) {
+					sp++; /* consume the 'u' */
+					modifiers -= 1; /* CSI u encodes modifiers + 1 */
+					int ctrl  = (modifiers & 4) != 0;
+					int alt   = (modifiers & 2) != 0;
+					int shift = (modifiers & 1) != 0;
+
+					if (alt)
+						*wp++ = '\033';
+
+					if (ctrl && codepoint >= 64 && codepoint <= 127) {
+						/* Ctrl + letter/symbol -> legacy control code */
+						*wp++ = (unsigned char)(codepoint & 0x1f);
+					} else if (ctrl && codepoint == 32) {
+						/* Ctrl+Space -> NUL */
+						*wp++ = 0;
+					} else if (shift && codepoint >= 'a' && codepoint <= 'z') {
+						*wp++ = (unsigned char)(codepoint - 32); /* uppercase */
+					} else {
+						wp += ToUtf8((char *)wp, (uint32_t)codepoint);
+					}
+					rp = sp;
+					continue;
+				}
+			}
+			*wp++ = *rp++;
+		}
+		size = wp - buf;
+	}
+
 	if (D_mouse && D_forecv) {
 		unsigned char *bp = (unsigned char *)buf;
 		unsigned char *end = bp + size;

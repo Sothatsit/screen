@@ -1284,6 +1284,11 @@ static int StringEnd(Window *win)
 				}
 			}
 		}
+		if (typ == 52) {
+			/* OSC 52 - clipboard access: pass through to outer terminal */
+			LAY_DISPLAYS(&win->w_layer, (AddStr("\033]"), AddStr(win->w_string), AddStr(t)));
+			break;
+		}
 		if (typ != 0 && typ != 2)
 			break;
 
