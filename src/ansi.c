@@ -1285,8 +1285,17 @@ static int StringEnd(Window *win)
 			}
 		}
 		if (typ == 52) {
-			/* OSC 52 - clipboard access: pass through to outer terminal */
-			LAY_DISPLAYS(&win->w_layer, (AddStr("\033]"), AddStr(win->w_string), AddStr(t)));
+			/* OSC 52 - clipboard access: pass through raw to outer terminal.
+			 * Must use AddChar (not AddStr) to bypass UTF-8 re-encoding. */
+			LAY_DISPLAYS(&win->w_layer, {
+				char *s;
+				AddChar('\033');
+				AddChar(']');
+				for (s = win->w_string; *s; s++)
+					AddChar(*s);
+				for (s = (char *)t; *s; s++)
+					AddChar(*s);
+			});
 			break;
 		}
 		if (typ != 0 && typ != 2)
