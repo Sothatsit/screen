@@ -211,7 +211,7 @@ struct Window {
 	bool     w_c1;			/* enable C1 flag */
 	int	 w_decodestate;		/* state of our input decoder */
 	int	 w_mbcs;		/* saved char for multibytes charset */
-	char	 w_string[MAXSTR];
+	char	 w_string[MAXOSCSTR];
 	char	*w_stringp;
 	char	*w_tabs;		/* line with tabs */
 	int	 w_bell;		/* bell status of this window */

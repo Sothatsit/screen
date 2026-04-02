@@ -42,6 +42,7 @@
 #define Ctrl(c) ((c)&037)
 
 #define MAXSTR		768
+#define MAXOSCSTR	1048576	/* OSC string buffer (e.g. OSC 52 clipboard) */
 #define MAXARGS 	64
 #define MSGWAIT 	5
 #define MSGMINWAIT 	1

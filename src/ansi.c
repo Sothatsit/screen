@@ -1209,7 +1209,7 @@ static void StringStart(Window *win, enum string_t type)
 
 static void StringChar(Window *win, int c)
 {
-	if (win->w_stringp >= win->w_string + MAXSTR - 1)
+	if (win->w_stringp >= win->w_string + MAXOSCSTR - 1)
 		win->w_state = LIT;
 	else
 		*(win->w_stringp)++ = c;
