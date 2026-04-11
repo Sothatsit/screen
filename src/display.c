@@ -2572,10 +2572,16 @@ static void disp_readev_fn(Event *event, void *data)
 	/* Translate CSI u (fixterms/kitty keyboard protocol) sequences
 	 * into legacy key encoding in-place. Modern terminals like Ghostty
 	 * send keys as ESC [ codepoint ; modifiers u instead of legacy
-	 * control codes. Screen doesn't understand CSI u, so we convert
-	 * them here before any other input processing sees the bytes.
+	 * control codes. Screen doesn't understand this protocol, so we
+	 * convert it here before any other input processing sees the bytes.
 	 *
-	 * Format: ESC [ <codepoint> ; <modifiers> u
+	 * Accept both:
+	 *   ESC [ <codepoint> u
+	 *   ESC [ <codepoint> ; <modifiers> u
+	 *
+	 * The semicolonless form is used for unmodified keys such as Esc,
+	 * which Codex emits as CSI 27u when keyboard disambiguation is on.
+	 *
 	 * Example: Ctrl+A = ESC [ 97 ; 5 u -> 0x01
 	 *
 	 * Modifier bits: 1=shift, 2=alt, 4=ctrl (value is encoded + 1)
@@ -2587,8 +2593,8 @@ static void disp_readev_fn(Event *event, void *data)
 			/* Look for ESC [ */
 			if (rp[0] == '\033' && rp + 1 < end && rp[1] == '[') {
 				unsigned char *sp = rp + 2;
-				int codepoint = 0, modifiers = 0;
-				int has_semi = 0;
+				int codepoint = 0;
+				int modifiers = 1;	/* default: no modifiers */
 
 				/* Parse codepoint */
 				while (sp < end && *sp >= '0' && *sp <= '9') {
@@ -2597,17 +2603,20 @@ static void disp_readev_fn(Event *event, void *data)
 				}
 				/* Parse ; modifiers */
 				if (sp < end && *sp == ';') {
-					has_semi = 1;
 					sp++;
+					modifiers = 0;
 					while (sp < end && *sp >= '0' && *sp <= '9') {
 						modifiers = modifiers * 10 + (*sp - '0');
 						sp++;
 					}
 				}
 				/* Check for terminating 'u' */
-				if (sp < end && *sp == 'u' && codepoint > 0 && has_semi) {
+				if (sp < end && *sp == 'u' && codepoint > 0) {
 					sp++; /* consume the 'u' */
-					modifiers -= 1; /* CSI u encodes modifiers + 1 */
+					if (modifiers > 0)
+						modifiers -= 1; /* CSI u encodes modifiers + 1 */
+					else
+						modifiers = 0;
 					int ctrl  = (modifiers & 4) != 0;
 					int alt   = (modifiers & 2) != 0;
 					int shift = (modifiers & 1) != 0;
