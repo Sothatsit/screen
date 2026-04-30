@@ -1275,6 +1275,51 @@ int color256to88(int color)
 	return color;
 }
 
+static int cube_component(int c)
+{
+	return c == 0 ? 0 : 55 + c * 40;
+}
+
+static int color_distance(int r1, int g1, int b1, int r2, int g2, int b2)
+{
+	int dr, dg, db;
+
+	dr = r1 - r2;
+	dg = g1 - g2;
+	db = b1 - b2;
+	return dr * dr + dg * dg + db * db;
+}
+
+static int rgbto256(int r, int g, int b)
+{
+	int rc, gc, bc, cube, gray, avg, grayv;
+
+	rc = (r * 5 + 127) / 255;
+	gc = (g * 5 + 127) / 255;
+	bc = (b * 5 + 127) / 255;
+	cube = 16 + rc * 36 + gc * 6 + bc;
+
+	avg = (r + g + b) / 3;
+	gray = (avg - 8 + 5) / 10;
+	if (gray < 0)
+		gray = 0;
+	else if (gray > 23)
+		gray = 23;
+	grayv = 8 + gray * 10;
+
+	if (color_distance(r, g, b, grayv, grayv, grayv) <
+	    color_distance(r, g, b, cube_component(rc), cube_component(gc), cube_component(bc)))
+		return 232 + gray;
+	return cube;
+}
+
+static uint32_t truecolor_to_256(uint32_t color)
+{
+	return 0x02000000 | rgbto256((color >> 16) & 0xff,
+				      (color >> 8) & 0xff,
+				      color & 0xff);
+}
+
 /*
  * SetColor - Sets foreground and background color
  * 0x00000000 <- default color ("transparent")
@@ -1297,6 +1342,15 @@ void SetColor(uint32_t foreground, uint32_t background)
 	ob = D_rend.colorbg;
 	D_rend.colorfg = f;
 	D_rend.colorbg = b;
+
+	if ((f & 0x04000000) && !hastruecolor)
+		f = truecolor_to_256(f);
+	if ((b & 0x04000000) && !hastruecolor)
+		b = truecolor_to_256(b);
+	if ((of & 0x04000000) && !hastruecolor)
+		of = truecolor_to_256(of);
+	if ((ob & 0x04000000) && !hastruecolor)
+		ob = truecolor_to_256(ob);
 
 	if (!D_CAX && D_hascolor && ((f == 0 && f != of) || (b == 0 && b != ob))) {
 		if (D_OP)

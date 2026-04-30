@@ -169,6 +169,7 @@ struct Window {
 	Window  *w_group;		/* window group we belong to */
 	int	 w_intermediate;	/* char used while parsing ESC-seq */
 	int	 w_args[MAXARGS];	/* emulator args */
+	int	 w_arg_sep[MAXARGS];	/* separator before each emulator arg */
 	int	 w_NumArgs;
 
 	int    w_wlock;		/* WLOCK_AUTO, WLOCK_OFF, WLOCK_ON */

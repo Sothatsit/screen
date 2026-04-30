@@ -92,7 +92,7 @@ int InitTermcap(int width, int height)
 	char *s;
 	int i;
 	char tbuf[TERMCAP_BUFSIZE], *tp;
-	int t, xue, xse, xme;
+	int t, xue, xse, xme, has_italic;
 
 	memset(tbuf, 0, ARRAY_SIZE(tbuf));
 	if (*D_termname == 0 || e_tgetent(tbuf, D_termname) != 1) {
@@ -183,6 +183,10 @@ int InitTermcap(int width, int height)
 		if (D_CXT)
 			D_BE = 1;
 	}
+	if (!D_CZH && D_ME && (strstr(D_ME, "\033[m") || strstr(D_ME, "\033[0m")))
+		D_CZH = "\033[3m";
+	if (D_CZH && !D_CZR)
+		D_CZR = "\033[23m";
 	if (nwin_options.flowflag == nwin_undef.flowflag)
 		nwin_default.flowflag = D_CNF ? FLOW_OFF : D_NX ? FLOW_ON : FLOW_AUTOFLAG;
 	D_CLP |= (!D_AM || D_XV || D_XN);
@@ -253,7 +257,12 @@ int InitTermcap(int width, int height)
 		D_attrtab[i] = D_tcs[T_ATTR + i].str;
 		D_attrtyp[i] = i == ATTR_SO ? xse : (i == ATTR_US ? xue : xme);
 	}
+	if (D_attrtab[ATTR_DI] == NULL) {
+		D_attrtab[ATTR_DI] = "\033[2m";
+		D_attrtyp[ATTR_DI] = xme;
+	}
 
+	has_italic = D_CZH != NULL;
 	/* Set up missing entries (attributes are priority ordered) */
 	s = NULL;
 	t = 0;
@@ -270,6 +279,10 @@ int InitTermcap(int width, int height)
 			s = D_attrtab[i];
 			t = D_attrtyp[i];
 		}
+	}
+	if (!has_italic) {
+		D_attrtab[ATTR_IT] = NULL;
+		D_attrtyp[ATTR_IT] = 0;
 	}
 	if (D_CAF || D_CAB || D_CSF || D_CSB)
 		D_hascolor = 1;
@@ -757,10 +770,8 @@ char *MakeTermcap(bool aflag)
 			AddCap("us=\\E[4m:");
 			AddCap("ue=\\E[24m:");
 		}
-		if (D_CZH) {
-			AddCap("so=\\E[3m:");
-			AddCap("se=\\E[23m:");
-		}
+		if (D_CZH)
+			AddCap("ZH=\\E[3m:ZR=\\E[23m:");
 		if (D_SO) {
 			AddCap("so=\\E[7m:");
 			AddCap("se=\\E[27m:");
@@ -769,14 +780,19 @@ char *MakeTermcap(bool aflag)
 			AddCap("mb=\\E[5m:");
 		if (D_MD)
 			AddCap("md=\\E[1m:");
-		if (D_MH)
-			AddCap("mh=\\E[2m:");
+		AddCap("mh=\\E[2m:");
 		if (D_MR)
 			AddCap("mr=\\E[7m:");
 		if (D_MB || D_MD || D_MH || D_MR)
 			AddCap("me=\\E[m:ms:");
-		if (D_hascolor)
-			AddCap("Co#8:pa#64:AF=\\E[3%dm:AB=\\E[4%dm:op=\\E[39;49m:AX:");
+		if (D_hascolor) {
+			if (D_CCO >= 256)
+				AddCap("Co#256:pa#32767:AF=\\E[38;5;%dm:AB=\\E[48;5;%dm:op=\\E[39;49m:AX:");
+			else
+				AddCap("Co#8:pa#64:AF=\\E[3%dm:AB=\\E[4%dm:op=\\E[39;49m:AX:");
+			if (hastruecolor)
+				AddCap("Tc:");
+		}
 		if (D_VB)
 			AddCap("vb=\\Eg:");
 		if (D_CG0)

@@ -351,6 +351,7 @@ void WriteString(Window *win, char *buf, size_t len)
 					win->w_NumArgs = 0;
 					win->w_intermediate = 0;
 					memset((char *)win->w_args, 0, MAXARGS * sizeof(int));
+					memset((char *)win->w_arg_sep, 0, MAXARGS * sizeof(int));
 					win->w_state = CSI;
 					break;
 				case ']':
@@ -414,6 +415,8 @@ void WriteString(Window *win, char *buf, size_t len)
 					break;
 				case ';':
 				case ':':
+					if (win->w_NumArgs + 1 < MAXARGS)
+						win->w_arg_sep[win->w_NumArgs + 1] = c;
 					if (win->w_NumArgs < MAXARGS)
 						win->w_NumArgs++;
 					break;
@@ -466,6 +469,7 @@ void WriteString(Window *win, char *buf, size_t len)
 							win->w_NumArgs = 0;
 							win->w_intermediate = 0;
 							memset((char *)win->w_args, 0, MAXARGS * sizeof(int));
+							memset((char *)win->w_arg_sep, 0, MAXARGS * sizeof(int));
 							win->w_state = CSI;
 							break;
 						case 0xc0 ^ 'P':
@@ -1263,6 +1267,21 @@ static int StringEnd(Window *win)
 			}
 			break;
 		}
+		if (typ == 10) {
+			LAY_DISPLAYS(&win->w_layer, {
+				char *s;
+				AddChar('\033');
+				AddChar(']');
+				AddChar('1');
+				AddChar('0');
+				AddChar(';');
+				for (s = p; *s; s++)
+					AddChar(*s);
+				for (s = (char *)t; *s; s++)
+					AddChar(*s);
+			});
+			break;
+		}
 		if (typ == 0 || typ == 1 || typ == 2 || typ == 11 || typ == 20 || typ == 39 || typ == 49) {
 			int typ2;
 			typ2 = typ / 10;
@@ -1728,6 +1747,32 @@ static void SelectRendition(Window *win)
 
 	do {
 		j = win->w_args[i];
+		if (j == 4 && i + 1 < win->w_NumArgs && win->w_arg_sep[i + 1] == ':') {
+			int style = win->w_args[++i];
+			if (style == 0)
+				attr &= ~A_US;
+			else if (style == 1 || style == 2)
+				attr |= A_US;
+			else
+				attr &= ~A_US;
+			continue;
+		}
+		if (j == 58) {
+			if (i + 1 < win->w_NumArgs && win->w_args[i + 1] == 5 && i + 2 < win->w_NumArgs) {
+				i += 2;
+				continue;
+			}
+			if (i + 1 < win->w_NumArgs && win->w_args[i + 1] == 2) {
+				if (i + 5 < win->w_NumArgs && win->w_arg_sep[i + 2] == ':' && win->w_args[i + 2] == 0)
+					i += 5;
+				else if (i + 4 < win->w_NumArgs)
+					i += 4;
+				continue;
+			}
+			continue;
+		}
+		if (j == 59)
+			continue;
 		/* indexed colour space aka 256 colours; example escape \e[48;2;12m */
 		if ((j == 38 || j == 48) && i + 2 < win->w_NumArgs && win->w_args[i + 1] == 5) {
 			int jj;
@@ -2383,4 +2428,3 @@ static void WChangeSize(Window *win, int w, int h)
 			Redisplay(0);
 	}
 }
-
