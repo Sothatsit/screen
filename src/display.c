@@ -72,7 +72,9 @@ static void disp_map_fn(Event *, void *);
 static void disp_idle_fn(Event *, void *);
 static void disp_blanker_fn(Event *, void *);
 static void disp_mousetimeout_fn(Event *, void *);
+static void disp_csiutimeout_fn(Event *, void *);
 static void disp_processinput (Display *, unsigned char *, size_t);
+static void ResetTerminalInputModes(void);
 static void WriteLP(int, int);
 static void INSERTCHAR(uint32_t);
 static void RAW_PUTCHAR(uint32_t);
@@ -217,6 +219,9 @@ Display *MakeDisplay(char *uname, char *utty, char *term, int fd, pid_t pid, str
 	D_mousetimeoutev.type = EV_TIMEOUT;
 	D_mousetimeoutev.data = (char *)display;
 	D_mousetimeoutev.handler = disp_mousetimeout_fn;
+	D_csiutimeoutev.type = EV_TIMEOUT;
+	D_csiutimeoutev.data = (char *)display;
+	D_csiutimeoutev.handler = disp_csiutimeout_fn;
 	D_OldMode = *Mode;
 	D_status_obuffree = -1;
 	Resize_obuf();		/* Allocate memory for buffer */
@@ -245,6 +250,9 @@ void FreeDisplay(void)
 	FreeTransTable();
 	KillBlanker();
 	if (D_userfd >= 0) {
+		if (D_mousetrack)
+			D_mousetrack = 0;
+		ResetTerminalInputModes();
 		Flush(3);
 		if (!display)
 			return;
@@ -276,6 +284,8 @@ void FreeDisplay(void)
 	}
 	evdeq(&D_idleev);
 	evdeq(&D_blankerev);
+	evdeq(&D_mousetimeoutev);
+	evdeq(&D_csiutimeoutev);
 
 	for (dp = &displays; (d = *dp); dp = &d->d_next)
 		if (d == display)
@@ -301,11 +311,6 @@ void FreeDisplay(void)
 	for (Window *p = mru_window; p; p = p->w_prev_mru)
 		if (p->w_zdisplay == display)
 			zmodem_abort(p, NULL);
-	if (D_mousetrack) {
-		D_mousetrack = 0;
-		MouseMode(0);
-		ExtMouseMode(0);
-	}
 	free((char *)display);
 	display = NULL;
 }
@@ -318,7 +323,9 @@ void InitTerm(int adapt)
 {
 	D_top = D_bot = -1;
 	AddCStr(D_IS);
+	ResetTerminalInputModes();
 	AddCStr(D_TI);
+	ResetTerminalInputModes();
 	/* Check for toggle */
 	if (D_IM && strcmp(D_IM, D_EI))
 		AddCStr(D_EI);
@@ -354,9 +361,7 @@ void FinitTerm(void)
 		CursorVisibility(0);
 		if (D_mousetrack)
 			D_mousetrack = 0;
-		MouseMode(0);
-		ExtMouseMode(0);
-		BracketedPasteMode(false);
+		ResetTerminalInputModes();
 		CursorStyle(0);
 		SetRendition(&mchar_null);
 		SetFlow(FLOW_ON);
@@ -370,6 +375,7 @@ void FinitTerm(void)
 		AddChar('\r');
 		AddChar('\n');
 		AddCStr(D_TE);
+		ResetTerminalInputModes();
 	}
 	Flush(3);
 }
@@ -575,6 +581,26 @@ void CursorVisibility(int v)
 			return;
 		D_curvis = v;
 	}
+}
+
+static void ResetTerminalInputModes(void)
+{
+	if (!display)
+		return;
+
+	csiu_reset(&D_csiu_parse);
+	evdeq(&D_csiutimeoutev);
+	D_mouse_parse.state = CSI_INACTIVE;
+
+	if (D_CXT) {
+		AddStr("\033[?9l\033[?1000l\033[?1001l\033[?1002l\033[?1003l");
+		AddStr("\033[?1004l\033[?1005l\033[?1006l\033[?1015l\033[?2004l");
+		AddStr("\033[>0;0m\033[>4;0m\033[=0u");
+	}
+
+	D_mouse = 0;
+	D_extmouse = 0;
+	D_bracketed = false;
 }
 
 void MouseMode(int mode)
@@ -942,14 +968,12 @@ void ClearArea(int x1, int y1, int xs, int xe, int x2, int y2, int bce, int usel
 void Redisplay(int cur_only)
 {
 	/* XXX do em all? */
+	ResetTerminalInputModes();
 	InsertMode(false);
 	ChangeScrollRegion(0, D_height - 1);
 	KeypadMode(0);
 	CursorkeysMode(0);
 	CursorVisibility(0);
-	MouseMode(0);
-	ExtMouseMode(0);
-	BracketedPasteMode(false);
 	CursorStyle(0);
 	SetRendition(&mchar_null);
 	SetFlow(FLOW_ON);
@@ -2413,6 +2437,7 @@ void NukePending(void)
 	D_top = D_bot = -1;
 	AddCStr(D_IS);
 	AddCStr(D_TI);
+	ResetTerminalInputModes();
 	/* Turn off all attributes. (Tim MacKenzie) */
 	if (D_ME)
 		AddCStr(D_ME);
@@ -2542,6 +2567,7 @@ static void disp_writeev_fn(Event *event, void *data)
 
 /* maximum mouse sequence length is SGR: ESC [ < b ; x ; y M */
 #define MAX_MOUSE_SEQUENCE (3+10+1+10+1+10+1)
+#define MAX_INPUT_SEQUENCE (CSIU_MAX_SEQUENCE > MAX_MOUSE_SEQUENCE ? CSIU_MAX_SEQUENCE : MAX_MOUSE_SEQUENCE)
 
 static void disp_readev_fn(Event *event, void *data)
 {
@@ -2552,8 +2578,8 @@ static void disp_readev_fn(Event *event, void *data)
 	 * bufspace to prepend the completed and translated mouse sequence.
 	 */
 	ssize_t size;
-	unsigned char bufspace[MAX_MOUSE_SEQUENCE + IOSIZE];
-	unsigned char *buf = bufspace + MAX_MOUSE_SEQUENCE;
+	unsigned char bufspace[MAX_INPUT_SEQUENCE + IOSIZE];
+	unsigned char *buf = bufspace + MAX_INPUT_SEQUENCE;
 	Canvas *cv;
 
 	(void)event; /* unused */
@@ -2623,79 +2649,12 @@ static void disp_readev_fn(Event *event, void *data)
 	if (D_fore)
 		D_fore->w_lastdisp = display;
 
-	/* Translate CSI u (fixterms/kitty keyboard protocol) sequences
-	 * into legacy key encoding in-place. Modern terminals like Ghostty
-	 * send keys as ESC [ codepoint ; modifiers u instead of legacy
-	 * control codes. Screen doesn't understand this protocol, so we
-	 * convert it here before any other input processing sees the bytes.
-	 *
-	 * Accept both:
-	 *   ESC [ <codepoint> u
-	 *   ESC [ <codepoint> ; <modifiers> u
-	 *
-	 * The semicolonless form is used for unmodified keys such as Esc,
-	 * which Codex emits as CSI 27u when keyboard disambiguation is on.
-	 *
-	 * Example: Ctrl+A = ESC [ 97 ; 5 u -> 0x01
-	 *
-	 * Modifier bits: 1=shift, 2=alt, 4=ctrl (value is encoded + 1)
-	 */
-	{
-		unsigned char *rp = buf, *wp = buf;
-		unsigned char *end = buf + size;
-		while (rp < end) {
-			/* Look for ESC [ */
-			if (rp[0] == '\033' && rp + 1 < end && rp[1] == '[') {
-				unsigned char *sp = rp + 2;
-				int codepoint = 0;
-				int modifiers = 1;	/* default: no modifiers */
-
-				/* Parse codepoint */
-				while (sp < end && *sp >= '0' && *sp <= '9') {
-					codepoint = codepoint * 10 + (*sp - '0');
-					sp++;
-				}
-				/* Parse ; modifiers */
-				if (sp < end && *sp == ';') {
-					sp++;
-					modifiers = 0;
-					while (sp < end && *sp >= '0' && *sp <= '9') {
-						modifiers = modifiers * 10 + (*sp - '0');
-						sp++;
-					}
-				}
-				/* Check for terminating 'u' */
-				if (sp < end && *sp == 'u' && codepoint > 0) {
-					sp++; /* consume the 'u' */
-					if (modifiers > 0)
-						modifiers -= 1; /* CSI u encodes modifiers + 1 */
-					else
-						modifiers = 0;
-					int ctrl  = (modifiers & 4) != 0;
-					int alt   = (modifiers & 2) != 0;
-					int shift = (modifiers & 1) != 0;
-
-					if (alt)
-						*wp++ = '\033';
-
-					if (ctrl && codepoint >= 64 && codepoint <= 127) {
-						/* Ctrl + letter/symbol -> legacy control code */
-						*wp++ = (unsigned char)(codepoint & 0x1f);
-					} else if (ctrl && codepoint == 32) {
-						/* Ctrl+Space -> NUL */
-						*wp++ = 0;
-					} else if (shift && codepoint >= 'a' && codepoint <= 'z') {
-						*wp++ = (unsigned char)(codepoint - 32); /* uppercase */
-					} else {
-						wp += ToUtf8((char *)wp, (uint32_t)codepoint);
-					}
-					rp = sp;
-					continue;
-				}
-			}
-			*wp++ = *rp++;
-		}
-		size = wp - buf;
+	if (csiu_pending_size(&D_csiu_parse))
+		evdeq(&D_csiutimeoutev);
+	size = csiu_translate(&D_csiu_parse, &buf, size);
+	if (csiu_pending_size(&D_csiu_parse)) {
+		SetTimeout(&D_csiutimeoutev, maptimeout);
+		evenq(&D_csiutimeoutev);
 	}
 
 	if (D_mouse && D_forecv) {
@@ -2954,6 +2913,22 @@ static void disp_mousetimeout_fn(Event *event, void *data)
 		break;
 	};
 	D_mouse_parse.state = CSI_INACTIVE;
+}
+
+static void disp_csiutimeout_fn(Event *event, void *data)
+{
+	unsigned char buf[CSIU_MAX_SEQUENCE];
+	size_t size;
+
+	(void)event; /* unused */
+
+	display = (Display *)data;
+	size = csiu_pending_size(&D_csiu_parse);
+	if (!size)
+		return;
+	memcpy(buf, csiu_pending_data(&D_csiu_parse), size);
+	csiu_reset(&D_csiu_parse);
+	disp_processinput(display, buf, size);
 }
 
 static void disp_status_fn(Event *event, void *data)

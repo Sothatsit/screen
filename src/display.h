@@ -34,6 +34,7 @@
 #include "canvas.h"
 #include "viewport.h"
 #include "comm.h"
+#include "csiu.h"
 #include "image.h"
 #include "screen.h"
 
@@ -120,8 +121,9 @@ struct Display {
 	int	d_mouse;			/* mouse mode */
 	int	d_extmouse;		/* extended mouse mode */
 	struct mouse_parse d_mouse_parse;	/* state of mouse code parsing */
+	CsiuParser d_csiu_parse;		/* state of CSI u keyboard parsing */
 	int	d_mousetrack;		/* set when user wants to use mouse even when the window
-					   does not */
+						   does not */
 	int   d_bracketed;		/* bracketed paste mode */
 	int   d_cursorstyle;		/* cursor style */
 	int   d_xtermosc[5];		/* osc used */
@@ -187,6 +189,7 @@ struct Display {
 	pid_t   d_blankerpid;
 	Event d_blankerev;
 	Event d_mousetimeoutev;		/* mouse sequence timeout event */
+	Event d_csiutimeoutev;		/* CSI u sequence timeout event */
 };
 
 #define DISPLAY(x) display->x
@@ -233,6 +236,7 @@ struct Display {
 #define D_lp_missing	DISPLAY(d_lp_missing)
 #define D_mouse		DISPLAY(d_mouse)
 #define D_mouse_parse	DISPLAY(d_mouse_parse)
+#define D_csiu_parse	DISPLAY(d_csiu_parse)
 #define D_extmouse	DISPLAY(d_extmouse)
 #define D_mousetrack	DISPLAY(d_mousetrack)
 #define D_xtermosc	DISPLAY(d_xtermosc)
@@ -303,6 +307,7 @@ struct Display {
 #define D_blankerev	DISPLAY(d_blankerev)
 #define D_blankerpid	DISPLAY(d_blankerpid)
 #define D_mousetimeoutev	DISPLAY(d_mousetimeoutev)
+#define D_csiutimeoutev	DISPLAY(d_csiutimeoutev)
 
 
 #define GRAIN 4096	/* Allocation grain size for output buffer */
