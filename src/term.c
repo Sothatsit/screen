@@ -184,7 +184,14 @@ struct term term[T_N] =
 /* define T_CAPS */
 
 /* mouse */
-  { "Km", T_STR  }, KMAPDEF("\033[M")		KMAPMDEF("\222")
+  /* No KMAPDEF here: a fixed replacement string can never be right for
+   * mouse input. The attaching terminal's kmous prefix may be the SGR
+   * introducer \E[< (modern terminfo), and rewriting it to the kmous
+   * captured at server start mangles every SGR mouse event when the
+   * creating and attaching terminals disagree. Mouse sequences are
+   * already translated per-display in disp_readev_fn, so normal windows
+   * must receive them verbatim. */
+  { "Km", T_STR  }, KMAPMDEF("\222")
 
 /* nolist */
   { "k0", T_STR  }, KMAPDEF("\033[10~")
